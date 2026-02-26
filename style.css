@@ -236,7 +236,7 @@ canvas {
 /* Footer (Buttons) */
 #game-footer {
     position: absolute;
-    top: 630px;
+    top: 600px;
     left: 0;
     width: 100%;
     animation: fadeIn 0.5s;

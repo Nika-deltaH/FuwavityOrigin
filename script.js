@@ -8,7 +8,7 @@ const GAME_H = 680;           // Canvas height
 const UI_HEIGHT = 50;     // Top UI bar (score / next)
 const GAMEOVER_Y = 170;     // Game over line (invisible, = UI_HEIGHT)
 const WARNING_LINE_Y = 190;    // Static gray line, always visible (10px below gameover)
-const WARNING_TRIGGER_Y = 205; // Triggers warning flag (15px below gray line)
+const WARNING_TRIGGER_Y = 205;  // Triggers warning flag (15px below gray line)
 const FIELD_TOP = WARNING_LINE_Y;     // Same as WARNING_LINE_Y
 const FIELD_BOTTOM = 600;    // Bottom wall inner face
 const FIELD_LEFT = 40;     // Left wall inner face
@@ -41,6 +41,8 @@ let score = 0;
 let isGameOver = false;
 let isPlaying = false;
 let isWarningActive = false;
+let gameOverCounter = 0;
+const GAMEOVER_THRESHOLD = 30; // 0.5 seconds at 60fps
 
 // Upcoming queue
 let upcomingLevels = [];
@@ -244,6 +246,7 @@ function init() {
         if (isGameOver) return;
 
         let warningTriggered = false;
+        let gameOverTriggered = false;
         const bodies = Composite.allBodies(engine.world);
 
         bodies.forEach(body => {
@@ -263,7 +266,7 @@ function init() {
             // Game Over Check: top edge above GAMEOVER_Y and nearly stopped
             if (topEdge < GAMEOVER_Y) {
                 if (body.speed < 0.5 && body.id !== (lastShotBodyId || -1)) {
-                    endGame();
+                    gameOverTriggered = true;
                 }
             }
 
@@ -279,6 +282,16 @@ function init() {
         });
 
         isWarningActive = warningTriggered;
+
+        // Game Over logic with delay
+        if (gameOverTriggered) {
+            gameOverCounter++;
+            if (gameOverCounter >= GAMEOVER_THRESHOLD) {
+                endGame();
+            }
+        } else {
+            gameOverCounter = 0;
+        }
     });
 
     // Collision & Merge Logic
@@ -528,6 +541,7 @@ function resetGame() {
     scoreEl.textContent = '0';
     isGameOver = false;
     isWarningActive = false;
+    gameOverCounter = 0;
     upcomingLevels = [];
     previewBall = null;
     dropX = (FIELD_LEFT + FIELD_RIGHT) / 2; // center of play field
