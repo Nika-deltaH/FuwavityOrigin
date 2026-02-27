@@ -671,12 +671,17 @@ if (screenshotBtn) {
 
 if (shareBtn) {
     shareBtn.addEventListener('click', () => {
-        const url = "https://nikaworx.com/Fuwavity/";
-        const text = `I scored ${score} in Fuwavity! Can you beat me? ${url}`;
+        const url = "https://nikaworx.com/FuwavityOrigin/";
+        const msg = `I scored ${score} in FuwavityOrigin! Can you beat me?`;
+
         if (navigator.share) {
-            navigator.share({ title: 'Fuwavity', text: text, url: url });
+            navigator.share({
+                title: 'FuwavityOrigin',
+                text: msg,
+                url: url
+            }).catch(err => console.error("Share failed", err));
         } else {
-            navigator.clipboard.writeText(text);
+            navigator.clipboard.writeText(`${msg} ${url}`);
             alert('Copied to clipboard!');
         }
     });
