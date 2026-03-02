@@ -6,7 +6,7 @@ const GAME_H = 680;           // Canvas height
 
 // Layout (all Y values are canvas-space, top = 0)
 const UI_HEIGHT = 50;     // Top UI bar (score / next)
-const GAMEOVER_Y = 170;     // Game over line (invisible, = UI_HEIGHT)
+const GAMEOVER_Y = 180;     // Game over line (invisible, = UI_HEIGHT)
 const WARNING_LINE_Y = 190;    // Static gray line, always visible (10px below gameover)
 const WARNING_TRIGGER_Y = 205;  // Triggers warning flag (15px below gray line)
 const FIELD_TOP = WARNING_LINE_Y;     // Same as WARNING_LINE_Y
@@ -127,7 +127,7 @@ async function preloadAssets() {
 }
 
 function makeWalls() {
-    const opts = { isStatic: true, render: { fillStyle: 'transparent' } };
+    const opts = { isStatic: true, restitution: 0.7, render: { fillStyle: 'transparent' } };
     const cx = (FIELD_LEFT + FIELD_RIGHT) / 2; // horizontal center of field
     return [
         // Bottom
@@ -451,7 +451,7 @@ function shoot() {
     const spawnX = Math.max(FIELD_LEFT + previewBall.radius, Math.min(FIELD_RIGHT - previewBall.radius, previewBall.x));
 
     const body = Bodies.circle(spawnX, DROP_Y, previewBall.radius, {
-        restitution: 0.4,
+        restitution: 0.7,
         friction: 0.05,
         frictionAir: 0.01,
         render: renderConfig
@@ -501,7 +501,7 @@ function mergeBalls(bodyA, bodyB) {
     };
 
     const newBody = Bodies.circle(midX, midY, radius, {
-        restitution: 0.3,
+        restitution: 0.7,
         friction: 0.05,
         frictionAir: 0.02,
         render: renderConfig
