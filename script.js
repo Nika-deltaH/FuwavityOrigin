@@ -18,7 +18,7 @@ const WALL_THICKNESS = 30;
 
 // Sizes: 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130 (Diameters)
 // Radii: 12.5, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65
-const BALL_RADII = [15, 20, 25, 30, 35, 40, 45, 52, 61, 72, 85, 100];
+const BALL_RADII = [15, 20, 25, 30, 35, 40, 45, 51, 58, 65, 73, 82];
 
 // Placeholder Colors
 const BALL_COLORS = [
@@ -93,10 +93,47 @@ bgm.volume = bgmVolume;
 clickSound.volume = sfxVolume;
 mergeSound.volume = sfxVolume;
 
+// Audio System State
+let audioCtx;
+let bgmGain, sfxGain;
+const sfxBuffers = {};
+
+async function initWebAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // BGM Routing
+    bgmGain = audioCtx.createGain();
+    try {
+        const bgmSource = audioCtx.createMediaElementSource(bgm);
+        bgmSource.connect(bgmGain);
+        bgmGain.connect(audioCtx.destination);
+    } catch (e) {
+        console.warn("BGM routing failed, likely already connected", e);
+    }
+    bgmGain.gain.value = bgmVolume;
+
+    // SFX Routing
+    sfxGain = audioCtx.createGain();
+    sfxGain.connect(audioCtx.destination);
+    sfxGain.gain.value = sfxVolume;
+}
+
+// Load SFX as buffer for precise volume control on mobile
+async function loadSFXBuffer(name, url) {
+    try {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+        sfxBuffers[name] = decoded;
+    } catch (e) {
+        console.error("Failed to load SFX buffer:", name, e);
+    }
+}
+
 async function preloadAssets() {
     let loadedCount = 0;
-    const totalAssets = IMAGES_TO_LOAD.length; // Intentionally only tracking images for visual loading bar
-    // Audio preloading is less visual, but we can try to fetch them too.
+    const totalAssets = IMAGES_TO_LOAD.length + 2; // +2 for SFX
 
     const updateProgress = () => {
         loadedCount++;
@@ -106,24 +143,30 @@ async function preloadAssets() {
             setTimeout(() => {
                 loadingScreen.style.display = 'none';
                 init();
-            }, 500); // Small delay for smoothness
+            }, 500);
         }
     };
 
+    // Prep Audio Context early (won't be active until interaction)
+    await initWebAudio();
+
+    // Load Images
     IMAGES_TO_LOAD.forEach(src => {
         const img = new Image();
         img.onload = () => {
-            // Extract simple filename key (e.g., '001')
             const key = src.split('/').pop().split('.')[0];
             ASSET_IMAGES[key] = img;
             updateProgress();
         };
-        img.onerror = (e) => {
-            console.error('Failed to load image:', src, e);
-            updateProgress(); // Continue anyway to avoid hanging
-        };
+        img.onerror = () => updateProgress();
         img.src = src;
     });
+
+    // Load SFX via Web Audio
+    await loadSFXBuffer('click', 'assets/click.mp3');
+    updateProgress();
+    await loadSFXBuffer('merge', 'assets/merge.mp3');
+    updateProgress();
 }
 
 function makeWalls() {
@@ -350,11 +393,16 @@ function handleInput(e) {
         const msg = document.getElementById('start-message');
         if (msg) msg.style.display = 'none';
 
+        // Unlock Web Audio Context for Mobile
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+
         // Show the next ball preview once game starts
         updateNextPreviewUI();
 
         // Try play BGM on first interaction
-        if (bgm.paused && bgm.volume > 0) {
+        if (bgm.paused && bgmVolume > 0) {
             bgm.play().catch(e => console.log("BGM waiting for interaction"));
         }
     }
@@ -553,12 +601,20 @@ function resetGame() {
     spawnPreview();
 }
 
-// Helper to play SFX (clone node to allow overlapping)
-function playSound(audio) {
-    if (audio.volume > 0) {
-        const clone = audio.cloneNode();
-        clone.volume = audio.volume;
-        clone.play().catch(e => console.warn('Audio play failed', e));
+// Helper to play SFX using Web Audio Buffer (solves overlapping and volume on mobile)
+function playSound(audioOrName) {
+    let name = audioOrName;
+    if (typeof audioOrName !== 'string') {
+        // Fallback or legacy mapping
+        if (audioOrName === clickSound) name = 'click';
+        else if (audioOrName === mergeSound) name = 'merge';
+    }
+
+    if (sfxVolume > 0 && sfxBuffers[name] && audioCtx) {
+        const source = audioCtx.createBufferSource();
+        source.buffer = sfxBuffers[name];
+        source.connect(sfxGain);
+        source.start(0);
     }
 }
 
@@ -589,16 +645,18 @@ if (closeSettingsBtn) {
 
 bgmSlider.addEventListener('input', (e) => {
     bgmVolume = e.target.value / 100;
-    bgm.volume = bgmVolume;
+    if (bgmGain) bgmGain.gain.setTargetAtTime(bgmVolume, audioCtx.currentTime, 0.05);
+
     if (bgmVolume > 0 && bgm.paused) {
         bgm.play().catch(e => console.warn("BGM play failed", e));
+    } else if (bgmVolume <= 0) {
+        // We don't necessarily pause BGM here, just set gain to 0
     }
 });
 
 sfxSlider.addEventListener('input', (e) => {
     sfxVolume = e.target.value / 100;
-    clickSound.volume = sfxVolume;
-    mergeSound.volume = sfxVolume;
+    if (sfxGain) sfxGain.gain.setTargetAtTime(sfxVolume, audioCtx.currentTime, 0.05);
 });
 
 // Handle tab switching / app backgrounding
@@ -615,56 +673,79 @@ document.addEventListener('visibilitychange', () => {
 
 
 if (screenshotBtn) {
-    screenshotBtn.addEventListener('click', () => {
-        // Manual Screenshot Composition
-        // 1. Create a temporary canvas
+    screenshotBtn.addEventListener('click', async () => {
+        const gameCanvas = document.querySelector('#game-container canvas');
+        if (!gameCanvas) return;
+
         const captureCanvas = document.createElement('canvas');
-        const gameCanvas = document.querySelector('#game-container canvas'); // Matter.js canvas
-
-        if (!gameCanvas) {
-            alert('Game canvas not found!');
-            return;
-        }
-
         captureCanvas.width = gameCanvas.width;
-        captureCanvas.height = gameCanvas.height + 150; // Extra height for Header/Footer info
+        captureCanvas.height = gameCanvas.height + 50; // Extra room for header & footer
         const ctx = captureCanvas.getContext('2d');
 
-        // 2. Fill Background
-        ctx.fillStyle = '#222';
+        // 1. Fill Background (Match body color)
+        ctx.fillStyle = '#88b1cc';
         ctx.fillRect(0, 0, captureCanvas.width, captureCanvas.height);
 
-        // 3. Draw Header Info manually (Since we can't capture HTML easily without html2canvas issues)
-        // Center the content vertically/horizontally
+        // 3. Draw Header "Game Over" (CSS Style)
         const centerX = captureCanvas.width / 2;
-
-        ctx.fillStyle = '#ff4444';
-        ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
-        ctx.lineWidth = 2;
+
+        // Title text
+        ctx.fillStyle = '#ff4444';
+        ctx.font = 'bold 42px Arial';
+        ctx.lineWidth = 4;
         ctx.strokeStyle = 'white';
-        ctx.strokeText('Game Over', centerX, 60);
-        ctx.fillText('Game Over', centerX, 60);
+        ctx.strokeText('Game Over', centerX, 50);
+        ctx.fillText('Game Over', centerX, 50);
 
+        // Score text
         ctx.fillStyle = 'white';
-        ctx.font = 'bold 36px Arial';
-        ctx.fillText('Score: ' + score, centerX, 110);
+        ctx.font = 'bold 28px Arial';
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 3;
+        ctx.fillText('Score: ' + score, centerX, 95);
+        ctx.shadowBlur = 0; // Reset shadow
 
-        // 4. Draw Game Canvas
-        // Position it below the header
-        const gameY = 150;
+        // 4. Draw Game Area (Shifted up to tighten gap)
+        const gameY = 10;
         ctx.drawImage(gameCanvas, 0, gameY);
 
-        // 5. Download
+        // 5. Draw Footer Copyright
+        ctx.fillStyle = 'white';
+        ctx.font = '14px Arial';
+        ctx.fillText('Nika © nikaworx.com', centerX, captureCanvas.height - 15);
+
         try {
-            const dataURL = captureCanvas.toDataURL('image/PNG');
+            const dataURL = captureCanvas.toDataURL('image/png');
+
+            // Check if mobile and navigator.share supports files
+            if (navigator.share && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                const blob = await (await fetch(dataURL)).blob();
+                const file = new File([blob], `R1HBD_Score_${score}.png`, { type: 'image/png' });
+
+                if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                        files: [file],
+                        title: 'R1HBD2026 Score',
+                        text: `Check out my score: ${score}!`
+                    });
+                    return; // Shared, exit
+                }
+            }
+
+            // Fallback for Desktop: Normal download
             const link = document.createElement('a');
-            link.download = `ComboGame_Score_${score}.PNG`;
+            link.download = `R1HBD2026_Score_${score}.png`;
             link.href = dataURL;
             link.click();
+
         } catch (err) {
-            console.error(err);
-            alert('Screenshot failed. If you are running locally (file://), browsers verify security. Please try on a local server or GitHub Pages.');
+            console.error('Screenshot error:', err);
+            if (window.location.protocol === 'file:') {
+                alert('【本地端安全限制】\n由於瀏覽器安全限制，直接點擊實體檔案開啟無法執行截圖功能。\n請使用 VS Code 的 Live Server 擴充功能開啟，或等上傳至伺服器(如 GitHub Pages)後再行測試！');
+            } else {
+                alert('截圖失敗。請嘗試在手機瀏覽器中進行測試。');
+            }
         }
     });
 }
